@@ -252,7 +252,7 @@ export async function exportToImage(hot: Handsontable, filename = "sheet.png") {
 
     // Build clone HOT (Core, not React)
     const clone = new Handsontable(cloneHost, {
-        // themeName: "ht-theme-main", $$$ TODO Commented for now because it adds rounded corners to the table
+        themeName: "ht-theme-main",
         data,
         cell: cell,
         rowHeaders: false,

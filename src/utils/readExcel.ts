@@ -167,6 +167,11 @@ export async function readExcelFile(file: File): Promise<ExcelParsedData> {
                     cellMeta.push({ row: r - 1, col: c - 1, key: "vAlign", value: a.vertical });
             }
 
+            // Number format from excel (numFmt)
+            if (typeof xl.numFmt === "string" && xl.numFmt && xl.numFmt !== "General") {
+                cellMeta.push({ row: r - 1, col: c - 1, key: "format", value: xl.numFmt });
+            }
+
             // Borders
             const b = xl.border;
             if (b) {

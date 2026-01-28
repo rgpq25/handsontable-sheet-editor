@@ -69,6 +69,7 @@ export async function exportToExcel(hot: Handsontable, filename: string = "expor
                 textColor,
                 hAlign,
                 vAlign,
+                format,
             } = meta;
 
             // Font
@@ -90,6 +91,11 @@ export async function exportToExcel(hot: Handsontable, filename: string = "expor
                     pattern: "solid",
                     fgColor: cssColorToExcel(backgroundColor),
                 };
+            }
+
+            // Number Format
+            if (format) {
+                cell.numFmt = format;
             }
 
             // Alignment
@@ -141,7 +147,6 @@ export async function exportToExcel(hot: Handsontable, filename: string = "expor
     }
 
     savedBorders.forEach((borderConfig: ComputedBorder) => {
-        // Handsontable uses 'start'/'end' for left/right borders
         const { row, col, top, bottom, start, end } = borderConfig;
 
         if (row === 2 && col == 1) {

@@ -6,6 +6,8 @@ import { Button } from './components/ui/button';
 import { exportToExcel } from './utils/exportExcel';
 import { exportToImage } from './utils/exportImage';
 import { readExcelFile } from './utils/readExcel';
+import { HyperFormula } from 'hyperformula';
+import { formatWithNumFmt, numFmtToFlags } from './utils/general';
 
 type BorderOptions = "bottom" | "top" | "left" | "right" | "clear" | "all" | "outer" | "inner";
 
@@ -33,7 +35,7 @@ const styleRenderer: any = function (
 
 	if (cellProperties === undefined || !cellProperties) return;
 
-	const { fontFamily, fontSize, isBold, isItalic, isUnderline, backgroundColor, textColor, hAlign, vAlign } = cellProperties as any;
+	const { fontFamily, fontSize, isBold, isItalic, isUnderline, backgroundColor, textColor, hAlign, vAlign, format } = cellProperties as any;
 
 	if (fontFamily) td.style.fontFamily = fontFamily;
 	if (fontSize) td.style.fontSize = `${fontSize * 1.3}px`;
@@ -45,6 +47,34 @@ const styleRenderer: any = function (
 
 	if (hAlign) td.style.textAlign = hAlign;
 	if (vAlign) td.style.verticalAlign = vAlign;
+
+	if (format) {
+		// 1) normal numeric formatting
+		const formatted = formatWithNumFmt(value, format);
+		if (formatted !== undefined) {
+			td.textContent = formatted;
+		}
+
+		// 2) custom handling for "zero as -"
+		const flags = numFmtToFlags(format);
+		if (flags.zeroDash) {
+			// use the *raw* value, not the formatted string
+			let num: number | undefined;
+
+			if (typeof value === "number") {
+				num = value;
+			} else if (typeof value === "string" && value.trim() !== "") {
+				const parsed = Number(value.replace(",", ""));
+				if (!Number.isNaN(parsed)) {
+					num = parsed;
+				}
+			}
+
+			if (num !== undefined && Math.abs(num) < 1e-12) {
+				td.textContent = "-";
+			}
+		}
+	}
 }
 
 Handsontable.renderers.registerRenderer("styleRenderer", styleRenderer);
@@ -271,6 +301,7 @@ function App() {
 				licenseKey="non-commercial-and-evaluation"
 				customBorders={true}
 				mergeCells={true}
+				formulas={{ engine: HyperFormula }}
 				contextMenu={{
 					items: {
 						row_above: {},

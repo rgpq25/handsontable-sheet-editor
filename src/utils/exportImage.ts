@@ -1,6 +1,8 @@
 // utils/exportImage.ts
 import Handsontable from "handsontable";
 import html2canvas from "html2canvas-pro";
+import { formatWithNumFmt, numFmtToFlags } from "./general";
+import { HyperFormula } from "hyperformula";
 
 const styleRendererClone: any = function (
     this: any,
@@ -31,6 +33,7 @@ const styleRendererClone: any = function (
         textColor,
         hAlign,
         vAlign,
+        format,
     } = cellProperties as any;
 
     if (fontFamily) td.style.fontFamily = fontFamily;
@@ -43,6 +46,34 @@ const styleRendererClone: any = function (
 
     if (hAlign) td.style.textAlign = hAlign;
     if (vAlign) td.style.verticalAlign = vAlign;
+
+    if (format) {
+        // 1) normal numeric formatting
+        const formatted = formatWithNumFmt(value, format);
+        if (formatted !== undefined) {
+            td.textContent = formatted;
+        }
+
+        // 2) custom handling for "zero as -"
+        const flags = numFmtToFlags(format);
+        if (flags.zeroDash) {
+            // use the *raw* value, not the formatted string
+            let num: number | undefined;
+
+            if (typeof value === "number") {
+                num = value;
+            } else if (typeof value === "string" && value.trim() !== "") {
+                const parsed = Number(value.replace(",", ""));
+                if (!Number.isNaN(parsed)) {
+                    num = parsed;
+                }
+            }
+
+            if (num !== undefined && Math.abs(num) < 1e-12) {
+                td.textContent = "-";
+            }
+        }
+    }
 };
 
 Handsontable.renderers.registerRenderer("styleRendererClone", styleRendererClone);
@@ -148,6 +179,7 @@ export async function exportToImage(hot: Handsontable, filename = "sheet.png") {
         "textColor",
         "hAlign",
         "vAlign",
+        "format",
     ] as const;
 
     const cell: any[] = [];
@@ -236,6 +268,7 @@ export async function exportToImage(hot: Handsontable, filename = "sheet.png") {
         cells: () => ({ renderer: styleRendererClone }),
         mergeCells,
         customBorders,
+        formulas: { engine: HyperFormula },
         licenseKey: settings.licenseKey ?? "non-commercial-and-evaluation",
         outsideClickDeselects: false,
     });

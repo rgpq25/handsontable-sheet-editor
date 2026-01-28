@@ -1,11 +1,11 @@
-import { HotTable } from '@handsontable/react-wrapper';
+import { HotTable, type HotTableRef } from '@handsontable/react-wrapper';
 import Handsontable from 'handsontable';
 import { useRef } from 'react';
 import { Toolbar } from './components/toolbar';
 import { Button } from './components/ui/button';
-import { readExcelFile } from './utils/readExcel';
 import { exportToExcel } from './utils/exportExcel';
 import { exportToImage } from './utils/exportImage';
+import { readExcelFile } from './utils/readExcel';
 
 type BorderOptions = "bottom" | "top" | "left" | "right" | "clear" | "all" | "outer" | "inner";
 
@@ -26,10 +26,17 @@ const styleRenderer: any = function (
 ) {
 	Handsontable.renderers.TextRenderer.apply(this, arguments as any);
 
+	td.style.lineHeight = "15px";
+	td.style.whiteSpace = "";
+	td.style.wordBreak = "";
+	td.style.padding = "0px 3px";
+
 	if (cellProperties === undefined || !cellProperties) return;
 
-	const { isBold, isItalic, isUnderline, backgroundColor, textColor, hAlign, vAlign } = cellProperties as any;
+	const { fontFamily, fontSize, isBold, isItalic, isUnderline, backgroundColor, textColor, hAlign, vAlign } = cellProperties as any;
 
+	if (fontFamily) td.style.fontFamily = fontFamily;
+	if (fontSize) td.style.fontSize = `${fontSize * 1.3}px`;
 	if (isBold) td.style.fontWeight = 'bold';
 	if (isItalic) td.style.fontStyle = 'italic';
 	if (isUnderline) td.style.textDecoration = 'underline';
@@ -45,7 +52,7 @@ Handsontable.renderers.registerRenderer("styleRenderer", styleRenderer);
 
 
 function App() {
-	const hotTableComponent = useRef<any>(null);
+	const hotTableComponent = useRef<HotTableRef | null>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 
 	const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -53,50 +60,50 @@ function App() {
 		if (!file) return;
 
 		const parsedData = await readExcelFile(file);
-		const hot: Handsontable | null = hotTableComponent.current?.hotInstance;
+		const hot: Handsontable | null | undefined = hotTableComponent.current?.hotInstance;
 
-		if (hot) {
-			// Group cell values by row/col for 'cell' option
-			const cellSettings: any[] = [];
-			const cellMetaMap: Record<string, any> = {};
+		if (!hot) return;
 
-			parsedData.cellMeta.forEach(meta => {
-				const key = `${meta.row},${meta.col}`;
-				if (!cellMetaMap[key]) {
-					cellMetaMap[key] = { row: meta.row, col: meta.col };
-				}
-				cellMetaMap[key][meta.key] = meta.value;
-			});
+		const cellSettings: any[] = [];
+		const cellMetaMap: Record<string, any> = {};
 
-			Object.values(cellMetaMap).forEach(val => cellSettings.push(val));
+		parsedData.cellMeta.forEach(meta => {
+			const key = `${meta.row},${meta.col}`;
+			if (!cellMetaMap[key]) {
+				cellMetaMap[key] = { row: meta.row, col: meta.col };
+			}
+			cellMetaMap[key][meta.key] = meta.value;
+		});
 
-			hot.updateSettings({
-				data: parsedData.data,
-				mergeCells: parsedData.mergeCells,
-				colWidths: parsedData.colWidths,
-				rowHeights: parsedData.rowHeights,
-				cell: cellSettings,
-				customBorders: parsedData.customBorders
-			});
-		}
+		Object.values(cellMetaMap).forEach(val => cellSettings.push(val));
+
+		hot.updateSettings({
+			data: parsedData.data,
+			mergeCells: parsedData.mergeCells,
+			colWidths: parsedData.colWidths,
+			rowHeights: parsedData.rowHeights,
+			cell: cellSettings,
+			customBorders: parsedData.customBorders
+		});
+		hot.render();
 	};
 
 	const handleExportExcel = async () => {
-		const hot: Handsontable | null = hotTableComponent.current?.hotInstance;
-		if (hot) {
-			await exportToExcel(hot, "handsontable_export.xlsx");
-		}
+		const hot: Handsontable | null | undefined = hotTableComponent.current?.hotInstance;
+		if (!hot) return;
+
+		await exportToExcel(hot, "handsontable_export.xlsx");
 	};
 
 	const handleExportImage = async () => {
-		const hot: Handsontable | null = hotTableComponent.current?.hotInstance;
-		if (hot) {
-			await exportToImage(hot, "handsontable_screenshot.png");
-		}
+		const hot: Handsontable | null | undefined = hotTableComponent.current?.hotInstance;
+		if (!hot) return;
+
+		await exportToImage(hot, "handsontable_screenshot.png");
 	};
 
 	const applyStyle = (key: string, value: any, toggle: boolean = false) => {
-		const hot: Handsontable | null = hotTableComponent.current?.hotInstance;
+		const hot: Handsontable | null | undefined = hotTableComponent.current?.hotInstance;
 		if (!hot) return;
 
 		const selected = hot.getSelected();
@@ -119,7 +126,7 @@ function App() {
 	};
 
 	const applyBorder = (borderStyle: BorderStyle) => {
-		const hot: Handsontable | null = hotTableComponent.current?.hotInstance;
+		const hot: Handsontable | null | undefined = hotTableComponent.current?.hotInstance;
 		if (!hot) return;
 		const selected = hot.getSelected();
 		if (!selected) return;
@@ -224,7 +231,7 @@ function App() {
 				className="hidden"
 			/>
 			<Button onClick={() => {
-				const hot: Handsontable | null = hotTableComponent.current?.hotInstance;
+				const hot: Handsontable | null | undefined = hotTableComponent.current?.hotInstance;
 				if (!hot) return;
 				const selected = hot.getSelected();
 				if (!selected) return;
@@ -235,6 +242,17 @@ function App() {
 				console.log("Borders: ", customBordersPlugin.getBorders(selected))
 			}}>
 				Inspect borders
+			</Button>
+			<Button onClick={() => {
+				const hot: Handsontable | null | undefined = hotTableComponent.current?.hotInstance;
+				if (!hot) return;
+				const selected = hot.getSelected();
+				if (!selected) return;
+
+				console.log("Selected: ", selected)
+				console.log("Metadata: ", hot.getCellMeta(selected[0][0], selected[0][1]))
+			}}>
+				Inspect metadata
 			</Button>
 			<HotTable
 				ref={hotTableComponent}

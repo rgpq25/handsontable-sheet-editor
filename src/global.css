@@ -121,3 +121,8 @@
     @apply bg-background text-foreground;
   }
 }
+
+.handsontable {
+  --ht-cell-vertical-padding: 0px;
+  --ht-font-size: 12px;
+}

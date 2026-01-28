@@ -1,4 +1,6 @@
 import { Workbook } from "exceljs";
+import type Handsontable from "handsontable";
+import type { ComputedBorder } from "handsontable/plugins/customBorders";
 
 function cssColorToExcel(cssColor: string | undefined): { argb: string } | undefined {
     if (!cssColor) return undefined;
@@ -26,12 +28,10 @@ function cssColorToExcel(cssColor: string | undefined): { argb: string } | undef
         }
     }
 
-    // Basic support for some named colors or rgb (could be expanded)
-    // For now, if it's not hex, we might just ignore or return a default
     return undefined;
 }
 
-export async function exportToExcel(hot: any, filename: string = "export.xlsx") {
+export async function exportToExcel(hot: Handsontable, filename: string = "export.xlsx") {
     const workbook = new Workbook();
     const worksheet = workbook.addWorksheet("Sheet 1");
 
@@ -42,8 +42,7 @@ export async function exportToExcel(hot: any, filename: string = "export.xlsx") 
     for (let c = 0; c < colCount; c++) {
         const width = hot.getColWidth(c);
         if (width) {
-            // Handsontable width to ExcelJS width (approximate)
-            worksheet.getColumn(c + 1).width = width / 8;
+            worksheet.getColumn(c + 1).width = width / 6.65;
         }
     }
 
@@ -51,7 +50,7 @@ export async function exportToExcel(hot: any, filename: string = "export.xlsx") 
     for (let r = 0; r < rowCount; r++) {
         const height = hot.getRowHeight(r);
         if (height) {
-            worksheet.getRow(r + 1).height = height * (72 / 96); // px to pt
+            worksheet.getRow(r + 1).height = height * (72 / 96);
         }
 
         for (let c = 0; c < colCount; c++) {
@@ -60,12 +59,23 @@ export async function exportToExcel(hot: any, filename: string = "export.xlsx") 
             cell.value = value;
 
             const meta = hot.getCellMeta(r, c);
-            const { isBold, isItalic, isUnderline, backgroundColor, textColor, hAlign, vAlign } =
-                meta;
+            const {
+                fontFamily,
+                fontSize,
+                isBold,
+                isItalic,
+                isUnderline,
+                backgroundColor,
+                textColor,
+                hAlign,
+                vAlign,
+            } = meta;
 
             // Font
             if (isBold || isItalic || isUnderline || textColor) {
                 cell.font = {
+                    name: fontFamily,
+                    size: fontSize,
                     bold: !!isBold,
                     italic: !!isItalic,
                     underline: !!isUnderline,
@@ -101,56 +111,61 @@ export async function exportToExcel(hot: any, filename: string = "export.xlsx") 
 
     // Merged Cells
     const mergeCellsPlugin = hot.getPlugin("mergeCells");
-    if (mergeCellsPlugin && mergeCellsPlugin.isEnabled()) {
-        const mergedCells = mergeCellsPlugin.mergedCellsCollection.mergedCells;
-        mergedCells.forEach((merge: any) => {
-            worksheet.mergeCells(
-                merge.row + 1,
-                merge.col + 1,
-                merge.row + merge.rowspan,
-                merge.col + merge.colspan
-            );
-        });
+    if (!mergeCellsPlugin.isEnabled()) {
+        alert("Error, merge cells plugin is not enabled!");
+        return;
     }
+
+    // @ts-expect-error $$$ TODO: For some reason, the type of mergedCellsCollection is not correct
+    const mergedCells = mergeCellsPlugin.mergedCellsCollection.mergedCells;
+    mergedCells.forEach((merge: any) => {
+        worksheet.mergeCells(
+            merge.row + 1,
+            merge.col + 1,
+            merge.row + merge.rowspan,
+            merge.col + merge.colspan
+        );
+    });
 
     // Borders (Custom Borders Plugin)
     const customBordersPlugin = hot.getPlugin("customBorders");
-    if (customBordersPlugin && customBordersPlugin.isEnabled()) {
-        // Unfortunately, customBorders doesn't expose a simple way to get 'all' borders
-        // so we iterate through cells. This can be slow for large grids.
-        for (let r = 0; r < rowCount; r++) {
-            for (let c = 0; c < colCount; c++) {
-                const borders = customBordersPlugin.getBorders([[r, c, r, c]])[0];
-                if (borders) {
-                    const cell = worksheet.getCell(r + 1, c + 1);
-                    const border: any = {};
-                    if (borders.top)
-                        border.top = { style: "thin", color: cssColorToExcel(borders.top.color) };
-                    if (borders.bottom)
-                        border.bottom = {
-                            style: "thin",
-                            color: cssColorToExcel(borders.bottom.color),
-                        };
-                    if (borders.left || borders.start)
-                        border.left = {
-                            style: "thin",
-                            color: cssColorToExcel(borders.left?.color || borders.start?.color),
-                        };
-                    if (borders.right || borders.end)
-                        border.right = {
-                            style: "thin",
-                            color: cssColorToExcel(borders.right?.color || borders.end?.color),
-                        };
-
-                    if (Object.keys(border).length > 0) {
-                        cell.border = border;
-                    }
-                }
-            }
-        }
+    if (!customBordersPlugin.isEnabled()) {
+        alert("Error, custom borders plugin is not enabled!");
+        return;
+    }
+    // @ts-expect-error savedBorders is not in the type definitions
+    const savedBorders: ComputedBorder[] | undefined = customBordersPlugin.savedBorders;
+    if (!savedBorders || !Array.isArray(savedBorders)) {
+        alert("Error, couldnt access the savedBorders property!");
+        return;
     }
 
-    // Write to buffer and download
+    savedBorders.forEach((borderConfig: ComputedBorder) => {
+        // Handsontable uses 'start'/'end' for left/right borders
+        const { row, col, top, bottom, start, end } = borderConfig;
+
+        if (row === 2 && col == 1) {
+            console.log("Were on the top 'Total' cell. borderConfig =", borderConfig);
+        }
+        if (row === 3 && col == 1) {
+            console.log("Were on the bottom 'Debit' cell. borderConfig =", borderConfig);
+        }
+
+        const cell = worksheet.getCell(row + 1, col + 1);
+        const border: any = {};
+
+        if (top && !top.hide) border.top = { style: "thin", color: cssColorToExcel(top.color) };
+        if (bottom && !bottom.hide)
+            border.bottom = { style: "thin", color: cssColorToExcel(bottom.color) };
+        if (start && !start.hide)
+            border.left = { style: "thin", color: cssColorToExcel(start.color) };
+        if (end && !end.hide) border.right = { style: "thin", color: cssColorToExcel(end.color) };
+
+        if (Object.keys(border).length > 0) {
+            cell.border = border;
+        }
+    });
+
     const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

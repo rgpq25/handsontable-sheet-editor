@@ -1,5 +1,6 @@
 import { Workbook } from "exceljs";
 import type { Cell, CellValue, Fill } from "exceljs";
+import { EXCEL_THEME_COLORS, EXCEL_INDEXED_COLORS, applyTint } from "../constants/sheet-style";
 
 export interface ExcelCellMeta {
     row: number;
@@ -18,10 +19,11 @@ export interface ExcelParsedData {
 }
 
 function excelColorToCss(
-    color: { argb?: string; theme?: number; indexed?: number } | null | undefined
+    color: { argb?: string; theme?: number; indexed?: number; tint?: number } | null | undefined
 ): string | undefined {
     if (!color) return undefined;
 
+    // Handle ARGB colors
     if (color.argb) {
         const argb = color.argb;
         if (argb.length === 8) {
@@ -36,10 +38,24 @@ function excelColorToCss(
         }
     }
 
-    // TODO: Handle indexed colors
+    // Handle indexed colors
+    if (color.indexed !== undefined) {
+        const indexedColor = EXCEL_INDEXED_COLORS[color.indexed];
+        if (indexedColor) {
+            return indexedColor;
+        }
+    }
 
+    // Handle theme colors
     if (color.theme !== undefined) {
-        return undefined;
+        const baseColor = EXCEL_THEME_COLORS[color.theme];
+        if (baseColor) {
+            // Apply tint if present
+            if (color.tint !== undefined && color.tint !== 0) {
+                return applyTint(baseColor, color.tint);
+            }
+            return baseColor;
+        }
     }
 
     return undefined;
@@ -79,10 +95,10 @@ export async function readExcelFile(file: File): Promise<ExcelParsedData> {
     const arrBuf = await file.arrayBuffer();
     const wb = new Workbook();
     await wb.xlsx.load(arrBuf);
-    const ws = wb.worksheets[0]; // TODO: Use important sheet
+    const ws = wb.worksheets[0]; // $$$ TODO: Use important sheet
 
     const mergeCells: { row: number; col: number; rowspan: number; colspan: number }[] = [];
-    const excelMerges: string[] = ws.model.merges || [];
+    const excelMerges: string[] = ws.model.merges;
     for (const ref of excelMerges) {
         const p = parseA1Range(ref);
         if (!p) continue;
@@ -116,7 +132,12 @@ export async function readExcelFile(file: File): Promise<ExcelParsedData> {
 
             // Font
             const f = xl.font;
+            if (r === 1 && c === 1) console.log("Font: ", xl.font);
             if (f) {
+                if (f.name)
+                    cellMeta.push({ row: r - 1, col: c - 1, key: "fontFamily", value: f.name });
+                if (f.size)
+                    cellMeta.push({ row: r - 1, col: c - 1, key: "fontSize", value: f.size });
                 if (f.bold) cellMeta.push({ row: r - 1, col: c - 1, key: "isBold", value: true });
                 if (f.italic)
                     cellMeta.push({ row: r - 1, col: c - 1, key: "isItalic", value: true });
@@ -191,7 +212,7 @@ export async function readExcelFile(file: File): Promise<ExcelParsedData> {
     const colWidths: number[] = [];
     for (let c = 1; c <= maxCol; c++) {
         const colWidth = ws.getColumn(c).width;
-        colWidths.push(colWidth ? Math.round(colWidth * 8) : 80); // Adjusted multiplier for better match
+        colWidths.push(colWidth ? Math.round(colWidth * 6.65) : 150);
     }
 
     const rowHeights: (number | undefined)[] = [];

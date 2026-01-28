@@ -1,303 +1,275 @@
-import html2canvas from "html2canvas-pro";
+// utils/exportImage.ts
 import Handsontable from "handsontable";
+import html2canvas from "html2canvas-pro";
 
-type CellStyle = {
-    isBold?: boolean;
-    isItalic?: boolean;
-    isUnderline?: boolean;
-    backgroundColor?: string;
-    textColor?: string;
-    hAlign?: "left" | "center" | "right";
-    vAlign?: "top" | "middle" | "bottom";
-    fontFamily?: string;
-    fontSize?: number;
+const styleRendererClone: any = function (
+    this: any,
+    hotInstance: Handsontable,
+    td: HTMLTableCellElement,
+    row: number,
+    col: number,
+    prop: string | number,
+    value: any,
+    cellProperties: Handsontable.CellProperties
+) {
+    Handsontable.renderers.TextRenderer.apply(this, arguments as any);
+
+    td.style.lineHeight = "15px";
+    td.style.whiteSpace = "";
+    td.style.wordBreak = "";
+    td.style.padding = "0px 3px";
+
+    if (cellProperties === undefined || !cellProperties) return;
+
+    const {
+        fontFamily,
+        fontSize,
+        isBold,
+        isItalic,
+        isUnderline,
+        backgroundColor,
+        textColor,
+        hAlign,
+        vAlign,
+    } = cellProperties as any;
+
+    if (fontFamily) td.style.fontFamily = fontFamily;
+    if (fontSize) td.style.fontSize = `${fontSize * 1.3}px`;
+    if (isBold) td.style.fontWeight = "bold";
+    if (isItalic) td.style.fontStyle = "italic";
+    if (isUnderline) td.style.textDecoration = "underline";
+    if (backgroundColor) td.style.backgroundColor = backgroundColor;
+    if (textColor) td.style.color = textColor;
+
+    if (hAlign) td.style.textAlign = hAlign;
+    if (vAlign) td.style.verticalAlign = vAlign;
 };
 
-export async function exportToImage(hot: any, filename: string = "export.png") {
+Handsontable.renderers.registerRenderer("styleRendererClone", styleRendererClone);
+
+/**
+ * Compute the used range (last row/col that contains any non-empty value),
+ * then expand it to include merged cells that intersect the range.
+ */
+function getUsedRange(hot: Handsontable) {
     const rows = hot.countRows();
     const cols = hot.countCols();
-    if (!rows || !cols) return;
 
-    // Capture current data
-    const data = hot.getData();
+    let lastRow = -1;
+    let lastCol = -1;
 
-    // Capture merges
-    const mergePlugin = hot.getPlugin("mergeCells");
-    const mergedCells = (mergePlugin?.mergedCellsCollection?.mergedCells || []).map((m: any) => ({
-        row: m.row,
-        col: m.col,
-        rowspan: m.rowspan,
-        colspan: m.colspan,
-    }));
-
-    // Capture colWidths / rowHeights
-    const widthsPx = Array.from({ length: cols }, (_, c) => hot.getColWidth(c) || 100);
-    const heightsPx = Array.from({ length: rows }, (_, r) => hot.getRowHeight(r) || 24);
-
-    // Compute bounding box
-    let minRow = rows;
-    let maxRow = -1;
-    let minCol = cols;
-    let maxCol = -1;
-
-    const markCell = (r: number, c: number) => {
-        if (r < 0 || c < 0 || r >= rows || c >= cols) return;
-        if (r < minRow) minRow = r;
-        if (r > maxRow) maxRow = r;
-        if (c < minCol) minCol = c;
-        if (c > maxCol) maxCol = c;
-    };
-
+    // 1) Find last row/col with data
     for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
-            const v = data[r][c];
-            if (v !== null && v !== undefined && v !== "") {
-                markCell(r, c);
+            const v = hot.getDataAtCell(r, c);
+            const hasValue =
+                v !== null && v !== undefined && !(typeof v === "string" && v.trim() === "");
+
+            if (hasValue) {
+                if (r > lastRow) lastRow = r;
+                if (c > lastCol) lastCol = c;
             }
         }
     }
 
-    for (const m of mergedCells) {
-        for (let r = m.row; r < m.row + m.rowspan; r++) {
-            for (let c = m.col; c < m.col + m.colspan; c++) {
-                markCell(r, c);
+    // No data at all → return minimal 1x1 (or you can bail out)
+    if (lastRow < 0 || lastCol < 0) {
+        return { r0: 0, c0: 0, r1: 0, c1: 0 };
+    }
+
+    // 2) Expand range to include merged cells that spill beyond lastRow/lastCol
+    const mergePlugin = hot.getPlugin("mergeCells") as any;
+    if (mergePlugin?.mergedCellsCollection) {
+        const merges = mergePlugin.mergedCellsCollection.mergedCells || [];
+        for (const m of merges) {
+            const mR0 = m.row;
+            const mC0 = m.col;
+            const mR1 = m.row + m.rowspan - 1;
+            const mC1 = m.col + m.colspan - 1;
+
+            // If merged cell intersects current used range, expand
+            const intersects = mR0 <= lastRow && mC0 <= lastCol && mR1 >= 0 && mC1 >= 0;
+            if (intersects) {
+                if (mR1 > lastRow) lastRow = mR1;
+                if (mC1 > lastCol) lastCol = mC1;
             }
         }
     }
 
-    if (maxRow === -1 || maxCol === -1) {
-        minRow = 0;
-        maxRow = 0;
-        minCol = 0;
-        maxCol = 0;
+    return { r0: 0, c0: 0, r1: lastRow, c1: lastCol };
+}
+
+function sumSizes(count: number, getSize: (i: number) => number) {
+    let total = 0;
+    for (let i = 0; i < count; i++) total += getSize(i);
+    return total;
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+}
+
+/**
+ * Export the Handsontable grid as a PNG capturing ONLY the used data area,
+ * independent of viewport size, including formatting, merges, and borders (best-effort).
+ */
+export async function exportToImage(hot: Handsontable, filename = "sheet.png") {
+    // Ensure latest render before cloning settings/data
+    hot.render();
+
+    const { r0, c0, r1, c1 } = getUsedRange(hot);
+    const rowCount = r1 - r0 + 1;
+    const colCount = c1 - c0 + 1;
+
+    // Extract data for used range
+    const data = hot.getData(r0, c0, r1, c1);
+
+    // Extract row/col sizes (fallback to defaults if undefined)
+    const getRowHeight = (r: number) => hot.getRowHeight(r0 + r) ?? 23;
+    const getColWidth = (c: number) => hot.getColWidth(c0 + c) ?? 80;
+
+    const bodyWidth = sumSizes(colCount, getColWidth);
+    const bodyHeight = sumSizes(rowCount, getRowHeight);
+
+    const META_KEYS = [
+        "fontFamily",
+        "fontSize",
+        "isBold",
+        "isItalic",
+        "isUnderline",
+        "backgroundColor",
+        "textColor",
+        "hAlign",
+        "vAlign",
+    ] as const;
+
+    const cell: any[] = [];
+    for (let r = r0; r <= r1; r++) {
+        for (let c = c0; c <= c1; c++) {
+            const meta = hot.getCellMeta(r, c) as any;
+            const entry: any = { row: r - r0, col: c - c0 };
+            let hasAny = false;
+
+            for (const k of META_KEYS) {
+                if (meta[k] !== undefined) {
+                    entry[k] = meta[k];
+                    hasAny = true;
+                }
+            }
+
+            if (hasAny) cell.push(entry);
+        }
     }
 
-    const effRows = maxRow - minRow + 1;
-    const effCols = maxCol - minCol + 1;
+    // Best-effort merges within used range
+    const mergeCells: any[] = [];
+    const mergePlugin = hot.getPlugin("mergeCells") as any;
+    if (mergePlugin?.mergedCellsCollection) {
+        const merges = mergePlugin.mergedCellsCollection.mergedCells || [];
+        for (const m of merges) {
+            const mR0 = m.row;
+            const mC0 = m.col;
+            const mR1 = m.row + m.rowspan - 1;
+            const mC1 = m.col + m.colspan - 1;
 
-    // Capture custom borders
-    const customBordersPlugin = hot.getPlugin("customBorders");
-    const allBorders =
-        customBordersPlugin && customBordersPlugin.isEnabled()
-            ? customBordersPlugin.getBorders([[0, 0, rows - 1, cols - 1]])
-            : [];
+            // Include merges that intersect used range
+            const intersects = mR0 <= r1 && mC0 <= c1 && mR1 >= r0 && mC1 >= c0;
 
-    const trimmedCustomBorders = allBorders
-        .filter(
-            (b: any) => b.row >= minRow && b.row <= maxRow && b.col >= minCol && b.col <= maxCol
-        )
-        .map((b: any) => ({
-            range: {
-                from: { row: b.row - minRow, col: b.col - minCol },
-                to: { row: b.row - minRow, col: b.col - minCol },
-            },
-            top: b.top,
-            bottom: b.bottom,
-            left: b.left,
-            right: b.right,
-        }));
+            if (intersects) {
+                mergeCells.push({
+                    row: Math.max(mR0, r0) - r0,
+                    col: Math.max(mC0, c0) - c0,
+                    rowspan: m.rowspan - Math.max(0, r0 - mR0) - Math.max(0, mR1 - r1),
+                    colspan: m.colspan - Math.max(0, c0 - mC0) - Math.max(0, mC1 - c1),
+                });
+            }
+        }
+    }
+    const settings = hot.getSettings() as any;
+    const customBorders = settings.customBorders;
 
-    const trimmedData = data
-        .slice(minRow, maxRow + 1)
-        .map((row: any) => row.slice(minCol, maxCol + 1));
-    const trimmedWidthsPx = widthsPx.slice(minCol, maxCol + 1);
-    const trimmedHeightsPx = heightsPx.slice(minRow, maxRow + 1);
+    const BLEED_PX = 1;
 
-    // Capture styles for the trimmed area
-    const trimmedStyles: (CellStyle | undefined)[][] = Array.from({ length: effRows }, (_, r) =>
-        Array.from({ length: effCols }, (_, c) => {
-            const meta = hot.getCellMeta(minRow + r, minCol + c);
-            return {
-                isBold: meta.isBold,
-                isItalic: meta.isItalic,
-                isUnderline: meta.isUnderline,
-                backgroundColor: meta.backgroundColor,
-                textColor: meta.textColor,
-                hAlign: meta.hAlign,
-                vAlign: meta.vAlign,
-                fontFamily: meta.fontFamily,
-                fontSize: meta.fontSize,
-            };
-        })
-    );
+    // Create offscreen wrapper
+    const wrapper = document.createElement("div");
+    wrapper.style.position = "fixed";
+    wrapper.style.left = "-100000px";
+    wrapper.style.top = "0";
+    wrapper.style.background = "white";
+    wrapper.style.zIndex = "100000";
 
-    const trimmedMerges = mergedCells
-        .map((m: any) => {
-            const r1 = m.row;
-            const r2 = m.row + m.rowspan - 1;
-            const c1 = m.col;
-            const c2 = m.col + m.colspan - 1;
+    wrapper.style.boxSizing = "content-box";
+    wrapper.style.padding = `${BLEED_PX}px`;
+    wrapper.style.overflow = "visible";
 
-            if (r2 < minRow || r1 > maxRow || c2 < minCol || c1 > maxCol) return null;
+    // Important: size large enough so nothing scrolls inside
+    wrapper.style.width = `${bodyWidth}px`;
+    wrapper.style.height = `${bodyHeight}px`;
+    document.body.appendChild(wrapper);
 
-            const nr1 = Math.max(r1, minRow);
-            const nc1 = Math.max(c1, minCol);
-            const nr2 = Math.min(r2, maxRow);
-            const nc2 = Math.min(c2, maxCol);
+    // Create clone container
+    const cloneHost = document.createElement("div");
+    wrapper.appendChild(cloneHost);
 
-            return {
-                row: nr1 - minRow,
-                col: nc1 - minCol,
-                rowspan: nr2 - nr1 + 1,
-                colspan: nc2 - nc1 + 1,
-            };
-        })
-        .filter((m: any) => m !== null);
-
-    const container = document.createElement("div");
-    container.style.position = "fixed";
-    container.style.left = "-10000px";
-    container.style.top = "0";
-    container.style.background = "#ffffff";
-    document.body.appendChild(container);
-
-    const contentWidth = trimmedWidthsPx.reduce((acc, w) => acc + w, 0);
-
-    const mirror = new Handsontable(container, {
-        data: trimmedData,
+    // Build clone HOT (Core, not React)
+    const clone = new Handsontable(cloneHost, {
+        // themeName: "ht-theme-main", $$$ TODO Commented for now because it adds rounded corners to the table
+        data,
+        cell: cell,
         rowHeaders: false,
         colHeaders: false,
-        licenseKey: "non-commercial-and-evaluation",
-        mergeCells: trimmedMerges,
-        customBorders: trimmedCustomBorders,
-        colWidths: trimmedWidthsPx,
-        rowHeights: trimmedHeightsPx,
-        width: contentWidth,
-        stretchH: "none",
-        readOnly: true,
-        renderAllRows: true, // render everything in DOM for screenshot
-        cells: (row, col) => ({
-            renderer: (
-                hotInstance: any,
-                td: HTMLTableCellElement,
-                r: number,
-                c: number,
-                prop: any,
-                value: any,
-                cellProperties: any
-            ) => {
-                // First call the base renderer
-                (Handsontable.renderers.getRenderer("text") as any).apply(null, [
-                    hotInstance,
-                    td,
-                    r,
-                    c,
-                    prop,
-                    value,
-                    cellProperties,
-                ]);
-
-                // Then apply our style logic
-                const st = trimmedStyles[r]?.[c];
-                if (st) {
-                    if (st.isBold) td.style.fontWeight = "bold";
-                    if (st.isItalic) td.style.fontStyle = "italic";
-                    if (st.isUnderline) td.style.textDecoration = "underline";
-                    if (st.backgroundColor) td.style.backgroundColor = st.backgroundColor;
-                    if (st.textColor) td.style.color = st.textColor;
-                    if (st.hAlign) td.style.textAlign = st.hAlign;
-                    if (st.vAlign) td.style.verticalAlign = st.vAlign;
-                }
-            },
-        }),
+        renderAllRows: true,
+        renderAllColumns: true,
+        autoRowSize: false,
+        autoColumnSize: false,
+        manualRowResize: false,
+        manualColumnResize: false,
+        rowHeights: (index: number) => getRowHeight(index),
+        colWidths: (index: number) => getColWidth(index),
+        cells: () => ({ renderer: styleRendererClone }),
+        mergeCells,
+        customBorders,
+        licenseKey: settings.licenseKey ?? "non-commercial-and-evaluation",
+        outsideClickDeselects: false,
     });
 
-    mirror.render();
-    await new Promise((resolve) => requestAnimationFrame(resolve));
+    // Force layout/render
+    clone.render();
+    await new Promise<void>((res) => requestAnimationFrame(() => res()));
 
-    // Overlay for merged cells (to fix html2canvas issues with them)
-    // We can also just capture the container directly if mirror.render() is sufficient
-    // but the user suggested an overlay for better fidelity.
+    const captureTarget = cloneHost.querySelector(".ht_master") as HTMLElement | null;
+    if (!captureTarget) throw new Error("Could not find capture target");
+    const rect = captureTarget.getBoundingClientRect();
+    wrapper.style.width = `${Math.ceil(rect.width)}px`;
+    wrapper.style.height = `${Math.ceil(rect.height)}px`;
 
-    // For now, let's try capturing the container directly first,
-    // and only if it fails we add the overlay complexity.
-    // Wait, the user specifically provided the overlay logic, so let's stick to it.
+    // Capture
+    const canvas = await html2canvas(wrapper, {
+        backgroundColor: "#ffffff",
+        scale: Math.max(2, window.devicePixelRatio || 1),
+        logging: false,
+    });
 
-    const overlayRoot = document.createElement("div");
-    overlayRoot.style.position = "absolute";
-    overlayRoot.style.left = "0";
-    overlayRoot.style.top = "0";
-    overlayRoot.style.width = "100%";
-    overlayRoot.style.height = "100%";
-    overlayRoot.style.pointerEvents = "none";
-    container.appendChild(overlayRoot);
-
-    for (const m of trimmedMerges) {
-        const owner = mirror.getCell(m.row, m.col) as HTMLTableCellElement | null;
-        if (!owner) continue;
-
-        const bottomRight =
-            (mirror.getCell(
-                m.row + m.rowspan - 1,
-                m.col + m.colspan - 1
-            ) as HTMLTableCellElement | null) || owner;
-
-        const ownerRect = owner.getBoundingClientRect();
-        const brRect = bottomRight.getBoundingClientRect();
-        const containerRect = container.getBoundingClientRect();
-
-        const left = ownerRect.left - containerRect.left;
-        const top = ownerRect.top - containerRect.top;
-        const width = brRect.right - ownerRect.left;
-        const height = brRect.bottom - ownerRect.top;
-
-        const st = trimmedStyles[m.row]?.[m.col];
-        const csOwner = getComputedStyle(owner);
-        const csBR = getComputedStyle(bottomRight);
-
-        const overlay = document.createElement("div");
-        overlay.textContent = owner.textContent || "";
-        overlay.style.position = "absolute";
-        overlay.style.left = `${left}px`;
-        overlay.style.top = `${top}px`;
-        overlay.style.width = `${width}px`;
-        overlay.style.height = `${height}px`;
-        overlay.style.display = "flex";
-        overlay.style.alignItems =
-            st?.vAlign === "top" ? "flex-start" : st?.vAlign === "bottom" ? "flex-end" : "center";
-        overlay.style.justifyContent =
-            st?.hAlign === "left" ? "flex-start" : st?.hAlign === "right" ? "flex-end" : "center";
-        overlay.style.textAlign =
-            st?.hAlign === "left" ? "left" : st?.hAlign === "right" ? "right" : "center";
-
-        overlay.style.backgroundColor = st?.backgroundColor || csOwner.backgroundColor || "#ffffff";
-        overlay.style.color = st?.textColor || csOwner.color || "#000000";
-
-        const fontSize = (st?.fontSize ?? 11) * 1.25;
-        overlay.style.fontFamily = st?.fontFamily || csOwner.fontFamily;
-        overlay.style.fontSize = `${fontSize}px`;
-        overlay.style.fontWeight = st?.isBold ? "700" : csOwner.fontWeight;
-        overlay.style.fontStyle = st?.isItalic ? "italic" : csOwner.fontStyle;
-        overlay.style.textDecoration = st?.isUnderline ? "underline" : csOwner.textDecoration;
-        overlay.style.padding = "0 4px";
-        overlay.style.boxSizing = "border-box";
-
-        overlay.style.borderTop = csOwner.borderTop;
-        overlay.style.borderLeft = csOwner.borderLeft;
-        overlay.style.borderRight = csBR.borderRight;
-        overlay.style.borderBottom = csBR.borderBottom;
-
-        overlayRoot.appendChild(overlay);
-
-        owner.style.color = "transparent";
-        owner.style.backgroundColor = "transparent";
+    // Convert to PNG + download
+    const blob: Blob | null = await new Promise((resolve) =>
+        canvas.toBlob((b) => resolve(b), "image/png")
+    );
+    if (!blob) {
+        clone.destroy();
+        wrapper.remove();
+        throw new Error("Failed to create PNG blob from canvas.");
     }
 
-    try {
-        const canvas = await html2canvas(container, {
-            backgroundColor: "#ffffff",
-            scale: 2,
-            logging: false,
-        });
+    downloadBlob(blob, filename);
 
-        const link = document.createElement("a");
-        link.download = filename;
-        link.href = canvas.toDataURL("image/png");
-        link.click();
-    } catch (err) {
-        console.error("Failed to export image:", err);
-    } finally {
-        mirror.destroy();
-        document.body.removeChild(container);
-    }
+    // Cleanup
+    clone.destroy();
+    wrapper.remove();
 }

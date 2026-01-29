@@ -9,7 +9,7 @@ import { readExcelFile } from './utils/readExcel';
 import { HyperFormula } from 'hyperformula';
 import { formatWithNumFmt, numFmtToFlags } from './utils/general';
 
-type BorderOptions = "bottom" | "top" | "left" | "right" | "clear" | "all" | "outer" | "inner";
+type BorderOptions = "bottom" | "top" | "left" | "right" | "clear" | "all" | "outer";
 
 type BorderStyle = {
 	lineColor: string;
